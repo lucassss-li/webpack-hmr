@@ -1,3 +1,4 @@
+//连接 ws
 let socket = io('/')
 class Emitter {
   constructor() {
@@ -14,17 +15,26 @@ let hotEmitter = new Emitter()
 const onConnected = () => {
   console.log('ws connected')
 }
-let hotCurrentHash // lastHash 上一次 hash值
+
+let lastHash // lastHash 上一次 hash值
 let currentHash // 这一次的hash值
+
+//监听 ws 消息
 socket.on('hash', hash => {
+  //更新hash
   currentHash = hash
 })
 socket.on('ok', () => {
+  //更新
   reloadApp(true)
 })
+
+// 热更新使用的时上次编译的 hash 值作为生成文件名
+// lastHash.hot-update.json
+// chunkID.lastHash.hot-update.js
 hotEmitter.on('webpackHotUpdate', () => {
-  if (!hotCurrentHash || hotCurrentHash === currentHash) {
-    return (hotCurrentHash = currentHash)
+  if (!lastHash || lastHash === currentHash) {
+    return (lastHash = currentHash)
   }
   hotCheck()
 })
@@ -32,25 +42,29 @@ hotEmitter.on('webpackHotUpdate', () => {
 function hotCheck() {
   hotDownloadManifest().then(update => {
     let chunkIds = Object.keys(update.c)
+    // 根据 chunk 变化信息，加载新模块 chunkID.lastHash.hot-update.js
     chunkIds.forEach(chunkId => {
       hotDownloadUpdateChunk(chunkId)
     })
   })
 }
 
+// 根据 chunkId 下载对应的变更文件
+// 采用的时 JSONP 方式，所以获取的文件会直接执行
+// 返回的JS文件会调用 webpackHotUpdate
 function hotDownloadUpdateChunk(chunkId) {
   let script = document.createElement('script')
   script.charset = 'utf-8'
   // /main.xxxx.hot-update.js
-  script.src = '/' + chunkId + '.' + hotCurrentHash + '.hot-update.js'
+  script.src = '/' + chunkId + '.' + lastHash + '.hot-update.js'
   document.head.appendChild(script)
 }
-// 此方法用来去询问服务器到底这一次编译相对于上一次编译改变了哪些chunk?哪些模块?
+// 请求 lastHash.hot-update.json 文件，获取变化信息
 function hotDownloadManifest() {
   return new Promise(function (resolve) {
     let request = new XMLHttpRequest()
     //hot-update.json文件里存放着从上一次编译到这一次编译 取到差异
-    let requestPath = '/' + hotCurrentHash + '.hot-update.json'
+    let requestPath = '/' + lastHash + '.hot-update.json'
     request.open('GET', requestPath, true)
     request.onreadystatechange = function () {
       if (request.readyState === 4) {
@@ -86,7 +100,8 @@ window.hotCreateModule = function () {
   }
   return hot
 }
-// 当客户端把最新的代码拉到浏览之后
+
+// 执行 chunkID.lastHash.hot-update.js 文件
 window.webpackHotUpdate = function (chunkId, moreModules) {
   // 循环新拉来的模块
   for (let moduleId in moreModules) {
@@ -104,6 +119,7 @@ window.webpackHotUpdate = function (chunkId, moreModules) {
       children,
       hot: window.hotCreateModule(moduleId)
     })
+    // 执行新的模块
     moreModules[moduleId].call(
       module.exports,
       module,
@@ -111,6 +127,8 @@ window.webpackHotUpdate = function (chunkId, moreModules) {
       __webpack_require__
     )
     module.l = true
+
+    //执行父模块设置的当前模块的更新策略
     parents.forEach(parent => {
       let parentModule = __webpack_require__.c[parent]
       if (
@@ -124,7 +142,7 @@ window.webpackHotUpdate = function (chunkId, moreModules) {
         location.reload()
       }
     })
-    hotCurrentHash = currentHash
+    lastHash = currentHash
   }
 }
 socket.on('connect', onConnected)

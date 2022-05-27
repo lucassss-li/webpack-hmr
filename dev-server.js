@@ -10,34 +10,38 @@ class Server {
   constructor(compiler) {
     this.compiler = compiler
     let sockets = []
-    let lastHash // 每次编译完成后都会产生一个stats对象，其中有一个hash值代表这一次编译结果hash就是一个32的字符串
+    let lastHash
+
+    //向 done hook 上挂载回调，每次编译完成通过 ws 连接通知客户端
     compiler.hooks.done.tap('webpack-dev-server', stats => {
+      //两次编译结果没有变化
       if (lastHash === stats.hash) return
       lastHash = stats.hash
-      // 每当新一个编译完成后都会向客户端发送消息
       sockets.forEach(socket => {
         // 先向客户端发送最新的hash值
-        // 每次编译都会产生一个hash值，另外如果是热更新的话，还会产出二个补丁文件。
-        // 里面描述了从上一次结果到这一次结果都有哪些chunk和模块发生了变化
         socket.emit('hash', stats.hash)
         // 再向客户端发送一个ok
         socket.emit('ok')
       })
     })
+
     let app = new express()
+
     // 以监控的模块启动一次webpack编译，当编译成功之后执行回调
+    // 每次编译都会产生一个hash值，另外如果是热更新的话，还会产出二个补丁文件。
+    // 里面描述了从上一次结果到这一次结果都有哪些chunk和模块发生了变化
     compiler.watch({}, err => {
       console.log('compiled')
     })
-    let fs = new MemoryFileSystem()
+
     // 如果你把compiler的输出文件系统改成了 MemoryFileSystem的话，则以后再产出文件都打包内存里去了
+    let fs = new MemoryFileSystem()
     compiler.outputFileSystem = fs
 
     function middleware(req, res, next) {
       if (req.url === '/favicon.ico') {
         return res.sendStatus(404)
       }
-      // /index.html   dist/index.html
       let filename = path.join(config.output.path, req.url.slice(1))
       let stat = fs.statSync(filename)
       if (stat.isFile()) {
@@ -56,7 +60,8 @@ class Server {
     app.use(middleware)
     this.server = require('http').createServer(app)
     let io = require('socket.io')(this.server)
-    // 启动一个 websocket服务器，然后等待连接来到，连接到来之后socket
+    // 启动一个 websocket服务器，然后等待连接来到
+    // 连接成功时，立马发送当前编译结果的hash值
     io.on('connection', socket => {
       sockets.push(socket)
       socket.emit('hash', lastHash)
